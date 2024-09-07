@@ -27,7 +27,7 @@ lstid_T_hr_lim           = (1, 4.5) # Bandpass filter cutoffs
 region                   = 'NA' # 'NA' --> North America
 freq_str                 = '14 MHz'
 sDate                    = datetime.datetime(2016,1,1)
-eDate                    = datetime.datetime(2016,1,5)
+eDate                    = datetime.datetime(2016,12,31)
 
 # NO PARAMETERS BELOW THIS LINE ################################################
 def prep_dirs(*dirs,clear_cache=False):
@@ -55,6 +55,14 @@ def get_dates(sDate,eDate):
         dates.append(dates[-1]+datetime.timedelta(days=1))
     
     return dates
+
+def catch_exp(rawProcDict):
+    try:
+        LSTID.data_loading.runRawProcessing(rawProcDict)
+    except FileNotFoundError as e:
+        print(f"Error processing date {rawProcDict['start_date']}: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
 
 def runEdgeDetectAndPlot(edgeDetectDict):
     """
@@ -126,12 +134,12 @@ else:
         rawProcDicts.append(tmp)
 
     # Process each day of Raw Spots
-    if not multiproc: # NO multiprocessing
+    if not multiproc:  # NO multiprocessing
         for rawProcDict in rawProcDicts:
-            LSTID.data_loading.runRawProcessing(rawProcDict)
-    else: # YES multiprocessing
+            safe_run(rawProcDict)
+    else:  # YES multiprocessing
         with multiprocessing.Pool(nprocs) as pool:
-            pool.map(LSTID.data_loading.runRawProcessing,rawProcDicts)
+            pool.map(catch_exp, rawProcDicts)  
     
     # Load in CSV Histograms/Heatmaps ###############
     heatmaps    = LSTID.data_loading.HeatmapDateIter(heatmap_csv_dir)
