@@ -4,6 +4,7 @@ import logging
 import datetime
 
 import numpy as np
+import h5py
 import pandas as pd
 import xarray as xr
 import dask.dataframe as dd
@@ -45,7 +46,8 @@ class RawSpotProcessor:
                  hist_gen=False,
                  geo_gen=False,
                  csv_gen=False,
-                 dask=True):
+                 dask=True,
+                 use_hdf5=False):  # New flag for HDF5
         """
         Initializes the DataAnalyzer object with the given settings and configuration.
         """
@@ -63,6 +65,7 @@ class RawSpotProcessor:
         self.geo_gen       = geo_gen
         self.csv_gen       = csv_gen
         self.dask          = dask
+        self.use_hdf5      = use_hdf5  # HDF5 flag
 
         # Extract date range for file selection
         self.file_date_range = pd.date_range(start=start_date, end=end_date).strftime('%Y-%m-%d')
@@ -105,6 +108,17 @@ class RawSpotProcessor:
                     files.append(file_path)
         if not files:
             raise FileNotFoundError("No CSV files found for the given date range.")
+        return files
+        
+    def find_files_for_date_h5(self):
+
+        files = []
+        for date in self.file_date_range:
+            file_path = os.path.join(self.input_dir, f'rsd{date}.01.hdf5')
+            if os.path.isfile(file_path):
+                files.append(file_path)
+        if not files:
+            raise FileNotFoundError("No HDF5 files found for the given date range.")
         return files
 
     def load_data_dask(self):
@@ -175,6 +189,51 @@ class RawSpotProcessor:
             logging.info("Data loaded and date column converted.")
         else:
             logging.warning("No data frames to concatenate.")
+
+    def load_pd_h5(self):
+    
+        file_paths = self.find_files_for_date_h5()
+        if not file_paths:
+            logging.warning("No files found.")
+            return
+
+        dfs = []
+        column_names = ['date', 'freq', 'dist_km', 'lat', 'long']
+        col          = ['year', 'month', 'day', 'hour', 'min', 'sec', 'tfreq', 'pthlen', 'latcen', 'loncen']
+        col_order    = ['datetime','tfreq', 'pthlen', 'latcen', 'loncen']
+
+        for file_path in file_paths:
+            print('Loading csv: ' + file_path,end=' ')
+            try:
+                tic = datetime.datetime.now()
+                with h5py.File(file_path, 'r') as hdf:
+                    # Access the dataset under 'Data/Table Layout'
+                    data = hdf['Data/Table Layout'][:]
+
+                # Convert the dataset to a pandas DataFrame
+                df = pd.DataFrame(data)
+                df = df[col]
+                df['year'] = df['year'].str.decode('utf-8')
+                df['month'] = df['month'].str.decode('utf-8')
+                df['day'] = df['day'].str.decode('utf-8')
+                df['hour'] = df['hour'].str.decode('utf-8')
+                df['min'] = df['min'].str.decode('utf-8')
+                df['sec'] = df['sec'].str.decode('utf-8')
+                df['datetime'] = pd.to_datetime(df['year'] + '-' + df['month'] + '-' + df['day'] + ' ' + df['hour'] + ':' + df['min'] + ':' + df['sec'])
+                df.drop(['year', 'month', 'day', 'hour', 'min', 'sec'], axis=1, inplace=True)
+                df = df[col_order]
+                df.columns = column_names
+                toc = datetime.datetime.now()
+                print('(Load time: {!s})'.format(toc-tic))
+                logging.info(f"Loaded file: {file_path}")
+            except Exception as e:
+                logging.error(f"Error loading file {file_path}: {e}")
+        
+
+#        self.df['date'] = pd.to_datetime(self.df['date'], format='%Y-%m-%d %H:%M:%S')
+        self.df = df
+        logging.info("Data loaded and date column converted.")
+
         
     def filter_data(self):
         """
@@ -282,10 +341,16 @@ class RawSpotProcessor:
             self.compute_data_dask()
             self.generate_histogram()
         else:
-            self.load_data_pd()
-            self.filter_data()
-            self.compute_data_pd()
-            self.generate_histogram()
+            if self.use_hdf5:
+                self.load_pd_h5()
+                self.filter_data()
+                self.compute_data_pd()
+                self.generate_histogram()
+            else:
+                self.load_data_pd()
+                self.filter_data()
+                self.compute_data_pd()
+                self.generate_histogram()
         if self.csv_gen:
             if self.hist_gen:
                 self.save_histogram()

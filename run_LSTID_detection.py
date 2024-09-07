@@ -9,7 +9,7 @@ import multiprocessing
 import hamsci_LSTID_detect as LSTID
 
 # EDIT PARAMETERS HERE #########################################################
-raw_processing_input_dir = 'raw_data'
+raw_processing_input_dir = '../madrigal_data/ham_spot_raw'
 datasets                = ['PSK','RBN','WSPR']
 
 clear_cache              = True
@@ -26,8 +26,8 @@ lstid_T_hr_lim           = (1, 4.5) # Bandpass filter cutoffs
 
 region                   = 'NA' # 'NA' --> North America
 freq_str                 = '14 MHz'
-sDate                    = datetime.datetime(2018,11,1)
-eDate                    = datetime.datetime(2019,4,30)
+sDate                    = datetime.datetime(2016,1,1)
+eDate                    = datetime.datetime(2016,1,5)
 
 # NO PARAMETERS BELOW THIS LINE ################################################
 def prep_dirs(*dirs,clear_cache=False):
@@ -120,7 +120,8 @@ else:
             csv_gen    = True,
             hist_gen   = True,
             geo_gen    = False,
-            dask       = False
+            dask       = False,
+            use_hdf5   = True
         )
         rawProcDicts.append(tmp)
 
