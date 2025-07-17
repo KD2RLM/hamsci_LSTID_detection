@@ -8,6 +8,9 @@ import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 import string
+import matplotlib.gridspec as gridspec
+from matplotlib.colors import LogNorm
+
 letters = string.ascii_lowercase
 
 def mpl_style():
@@ -93,174 +96,237 @@ def adjust_axes(ax_0,ax_1):
     ax_0_pos[2] = ax_1_pos[2]
     ax_0.set_position(ax_0_pos)
 
-def curve_combo_plot(result_dct,cb_pad=0.125,
-                     output_dir=os.path.join('output','daily_plots')):
+import os
+import matplotlib.pyplot as plt
+from matplotlib import gridspec
+import pandas as pd
+
+def curve_combo_plot(result_dct, cb_pad=0.125,
+                     output_dir=os.path.join('output', 'daily_plots')):
     """
-    Make a curve combo stackplot that includes:
-        1. Heatmap of Ham Radio Spots
-        2. Raw Detected Edge
-        3. Filtered, Windowed Edge
-        4. Spectra of Edges
-
-    Input:
-        result_dct: Dictionary of results produced by run_edge_detect().
+    Revised combo plot with 11 panels:
+        1. (a) Raw rarr (duplicated)
+        2. (b) Raw rarr (duplicated)
+        3. (c) Blurred arr with quantile medians
+        4. (d) arr + detected edge + variation + region lines
+        5. (e) arr + 1st sinfit used for detrending
+        6. (f) Detrended edge (detected edge - poly fit)
+        7. (g) Bandpass-filtered edge (use data_detrend here)
+        8. (h) 2nd sinfit over bandpassed edge (reuse sin_fit here)
+        9. (i) Text box with 2nd sinfit params (reuse p0_sin_fit)
+       10. (j) arr + 2nd sinfit added back (poly_fit + sin_fit)
     """
-    md              = result_dct.get('metaData')
-    date            = md.get('date')
-    xlim            = md.get('xlim')
-    winlim          = md.get('winlim')
-    fitWinLim       = md.get('fitWinLim')
+    md = result_dct.get('metaData')
+    date = md.get('date')
+    xlim = md.get('xlim')
+    winlim = md.get('winlim')
+    fitWinLim = md.get('fitWinLim')
+    qs = md.get('qs')
 
-    arr             = result_dct.get('spotArr')
-    edge_0          = result_dct.get('000_detectedEdge')
-    sin_fit         = result_dct.get('sin_fit')
-    poly_fit        = result_dct.get('poly_fit')
-    p0_sin_fit      = result_dct.get('p0_sin_fit')
-    p0_poly_fit     = result_dct.get('p0_poly_fit')
-    stability       = result_dct.get('stability')
-    data_detrend    = result_dct.get('data_detrend')
+    rarr  = result_dct.get('rawArr')
+    barr  = result_dct.get('intArr')
+    arr = result_dct.get('spotArr')
+    med_lines = result_dct.get('med_lines')
+    edge_0 = result_dct.get('000_detectedEdge')
+    sin_fit = result_dct.get('sin_fit')
+    poly_fit = result_dct.get('poly_fit')
+    stability = result_dct.get('stability')
+    data_detrend = result_dct.get('data_detrend')
+    p0_sin_fit = result_dct.get('p0_sin_fit')
 
-    ranges_km   = arr.coords['ranges_km']
-    arr_times   = [pd.Timestamp(x) for x in arr.coords['datetimes'].values]
+    print(rarr)
+    print(arr)
+    print(barr)
+    ranges_km = arr.coords['ranges_km']
+    arr_times = [pd.Timestamp(x) for x in arr.coords['datetimes'].values]
 
-    nCols   = 1
-    nRows   = 4
+    if data_detrend is None:
+        data_detrend = edge_0 - poly_fit
+        result_dct['data_detrend'] = data_detrend
 
-    axInx   = 0
-    figsize = (18,nRows*6)
+    letters = list('abcdefghijk')
+    fig = plt.figure(figsize=(19, 55))
+    gs = gridspec.GridSpec(11, 2, width_ratios=[20, 0.5], height_ratios=[1]*11)
+    axs = []
+    axcbs = [None] * 11
 
-    fig     = plt.figure(figsize=figsize)
-    axs     = []
+    qs_vals = [float(col) for col in med_lines.columns if col != 'Time']
+    med_lines_vals = [med_lines[q].values for q in qs_vals]
 
-    # Plot Heatmap #########################
-    for plot_fit in [False, True]:
-        axInx   = axInx + 1
-        ax      = fig.add_subplot(nRows,nCols,axInx)
-        axs.append(ax)
-
-        mpbl = ax.pcolormesh(arr_times,ranges_km,arr,cmap='plasma')
-        plt.colorbar(mpbl,aspect=10,pad=cb_pad,label='Scaled Amateur Radio Data')
-        if not plot_fit:
-            ax.set_title(f'| {date} |')
-        else:
-            ax.plot(arr_times,edge_0,lw=2,label='Detected Edge')
-
-            if p0_sin_fit != {}:
-                ax.plot(sin_fit.index,sin_fit+poly_fit,label='Sin Fit',color='white',lw=3,ls='--')
-
-            ax2 = ax.twinx()
-            ax2.plot(stability.index,stability,lw=2,color='0.5')
-            ax2.grid(False)
-            ax2.set_ylabel('Edge Coef. of Variation\n(Grey Line)')
-
-            for wl in winlim:
-                ax.axvline(wl,color='0.8',ls='--',lw=2)
-
-            for wl in fitWinLim:
-                ax.axvline(wl,color='lime',ls='--',lw=2)
-
-            ax.legend(loc='upper center',fontsize='x-small',ncols=4)
-
-        fmt_xaxis(ax,xlim)
-        ax.set_ylabel('Range [km]')
-        ax.set_ylim(1000,2000)
-
-    # Plot Detrended and fit data. #########
-    axInx   = axInx + 1
-    ax      = fig.add_subplot(nRows,nCols,axInx)
+    # Panel (a) - Raw rarr heatmap (first duplicate)
+    ax = fig.add_subplot(gs[0, 0])
     axs.append(ax)
-
-    ax.plot(data_detrend.index,data_detrend,label='Detrended Edge')
-    ax.plot(sin_fit.index,sin_fit,label='Sin Fit',color='red',lw=3,ls='--')
-
-    for wl in fitWinLim:
-        ax.axvline(wl,color='lime',ls='--',lw=2)
-    
-
+    ax_cb = fig.add_subplot(gs[0, 1])
+    axcbs[0] = ax_cb
+    mpbl = ax.pcolormesh(arr_times, ranges_km, rarr.T, cmap='plasma', shading='nearest', rasterized=True, antialiased=False)
+    ax.legend(loc='upper center', fontsize='x-small', ncols=4)
+    plt.colorbar(mpbl, cax=ax_cb, orientation='vertical', label='Raw Data')
+    fmt_xaxis(ax, xlim)
     ax.set_ylabel('Range [km]')
-    fmt_xaxis(ax,xlim)
-    ax.legend(loc='lower right',fontsize='x-small',ncols=4)
+    ax.set_ylim(250, 2000)
 
-    # Print TID Info
-    axInx   = axInx + 1
-    ax      = fig.add_subplot(nRows,nCols,axInx)
-    ax.grid(False)
-    for xtl in ax.get_xticklabels():
-        xtl.set_visible(False)
-    for ytl in ax.get_yticklabels():
-        ytl.set_visible(False)
+    # Panel (c) — blurred arr with quantile medians
+    ax = fig.add_subplot(gs[1, 0])
     axs.append(ax)
-
-    fontdict = {'weight':'normal','family':'monospace'}
+    ax_cb = fig.add_subplot(gs[1, 1])
+    axcbs[1] = ax_cb
+    mpbl = ax.pcolormesh(arr_times, ranges_km, arr, cmap='plasma', shading='nearest', rasterized=True, antialiased=False)
+#    for q, line in zip(qs_vals, med_lines_vals):
+#        ax.plot(arr_times, line, label=f'Quantile {q}')
+    ax.legend(loc='upper center', fontsize='x-small', ncols=4)
+    plt.colorbar(mpbl, cax=ax_cb, orientation='vertical', label='Gaussian Filtered Data')
+    fmt_xaxis(ax, xlim)
+    ax.set_ylabel('Range [km]')
+    ax.set_ylim(250, 2000)
     
-    txt = []
-    txt.append('2nd Deg Poly Fit')
-    txt.append('(Used for Detrending)')
-    for key, val in p0_poly_fit.items():
-        if key == 'r2':
-            txt.append('{!s}: {:0.2f}'.format(key,val))
-        else:
-            txt.append('{!s}: {:0.1f}'.format(key,val))
-    ax.text(0.01,0.95,'\n'.join(txt),fontdict=fontdict,va='top')
+    # Panel (b) - Raw rarr heatmap (second duplicate)
+    ax = fig.add_subplot(gs[2, 0])
+    axs.append(ax)
+    ax_cb = fig.add_subplot(gs[2, 1])
+    axcbs[2] = ax_cb
+    mpbl = ax.pcolormesh(arr_times, ranges_km, barr.T, cmap='plasma', shading='nearest', rasterized=True, antialiased=False)
+    ax.legend(loc='upper center', fontsize='x-small', ncols=4)
+    plt.colorbar(mpbl, cax=ax_cb, orientation='vertical', label='8bit Rescale Data')
+    fmt_xaxis(ax, xlim)
+    ax.set_ylabel('Range [km]')
+    ax.set_ylim(250, 2000)
 
-    txt = []
-    txt.append('Sinusoid Fit')
-    for key, val in p0_sin_fit.items():
-        if key == 'r2':
-            txt.append('{!s}: {:0.2f}'.format(key,val))
-        elif key == 'selected': 
-            # 'selected' means the fit that had the best r2
-            # Since we are only plotting the fit with the best r2,
-            # don't explicitly print out 'selected' here.
-            continue
-        else:
-            txt.append('{!s}: {:0.1f}'.format(key,val))
-    ax.text(0.30,0.95,'\n'.join(txt),fontdict=fontdict,va='top')
+    # Panel (d) — arr + detected edge + stability + regions
+    ax = fig.add_subplot(gs[3, 0])
+    axs.append(ax)
+    ax_cb = fig.add_subplot(gs[3, 1])
+    axcbs[3] = ax_cb
+    mpbl = ax.pcolormesh(arr_times, ranges_km, arr, cmap='plasma', shading='nearest', rasterized=True, antialiased=False)
+    plt.colorbar(mpbl, cax=ax_cb, orientation='vertical', label='Blurred Data')
+    ax2 = ax.twinx()
+    ax2.plot(stability.index, stability, lw=2, color='0.5')
+    ax2.grid(False)
+    ax2.set_ylabel('Edge Coef. of Variation')
+    for wl in winlim:
+        ax.axvline(wl, color='0.8', ls='--', lw=2)
+    for wl in fitWinLim:
+        ax.axvline(wl, color='lime', ls='--', lw=2)
+    fmt_xaxis(ax, xlim)
+    ax.set_ylabel('Range [km]')
+    ax.set_ylim(250, 2000)
 
-    fig.tight_layout()
+    # Panel (e) — arr + 1st sin fit
+    ax = fig.add_subplot(gs[4, 0])
+    axs.append(ax)
+    ax_cb = fig.add_subplot(gs[4, 1])
+    axcbs[4] = ax_cb
+    mpbl = ax.pcolormesh(arr_times, ranges_km, arr, cmap='plasma', shading='nearest', rasterized=True, antialiased=False)
+    ax.plot(poly_fit.index, poly_fit, label='1st Sin Fit', color='white', lw=3, ls='--')
+    ax.plot(arr_times, edge_0, lw=2, label='Detected Edge', color='cyan')
+    for wl in fitWinLim:
+        ax.axvline(wl, color='lime', ls='--', lw=2)
+    plt.colorbar(mpbl, cax=ax_cb, orientation='vertical', label='Blurred Data')
+    ax.legend(loc='upper center', fontsize='x-small', ncols=4)
+    fmt_xaxis(ax, xlim)
+    ax.set_ylabel('Range [km]')
+    ax.set_ylim(250, 2000)
 
-    # Add panel labels.
+    # Panel (f) — Detrended edge
+    ax = fig.add_subplot(gs[5, 0])
+    axs.append(ax)
+    filtered = edge_0 - poly_fit
+    ax.plot(filtered.index, filtered, label='Detrended Edge')
+    for wl in fitWinLim:
+        ax.axvline(wl, color='lime', ls='--', lw=2)
+    fmt_xaxis(ax, xlim)
+    ax.set_ylabel('Range [km]')
+    ax.legend(loc='lower right', fontsize='x-small', ncols=4)
+
+    # Panel (g) — Bandpass-filtered edge
+    ax = fig.add_subplot(gs[6, 0])
+    axs.append(ax)
+    ax.plot(data_detrend.index, data_detrend, label='Bandpass Filtered')
+    for wl in fitWinLim:
+        ax.axvline(wl, color='lime', ls='--', lw=2)
+    fmt_xaxis(ax, xlim)
+    ax.set_ylabel('Range [km]')
+    ax.legend(loc='lower right', fontsize='x-small', ncols=4)
+
+    # Panel (h) — 2nd Sinfit
+    ax = fig.add_subplot(gs[7, 0])
+    axs.append(ax)
+    ax.plot(data_detrend.index, data_detrend, label='Bandpass Filtered (simulated)')
+    ax.plot(sin_fit.index, sin_fit, label='2nd Sin Fit (reuse 1st)', color='red', lw=3, ls='--')
+    for wl in fitWinLim:
+        ax.axvline(wl, color='lime', ls='--', lw=2)
+    fmt_xaxis(ax, xlim)
+    ax.set_ylabel('Range [km]')
+    ax.legend(loc='lower right', fontsize='x-small', ncols=4)
+
+    # Panel (i) — textbox with sin fit params
+    ax = fig.add_subplot(gs[8, 0])
+    axs.append(ax)
+    ax.grid(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    fontdict = {'weight': 'normal', 'family': 'monospace'}
+    txt = ['2nd Sinusoid Fit (simulated)']
+    if p0_sin_fit:
+        for key, val in p0_sin_fit.items():
+            if key == 'r2':
+                txt.append(f'{key}: {val:.2f}')
+            elif key != 'selected':
+                txt.append(f'{key}: {val:.1f}')
+    ax.text(0.01, 0.95, '\n'.join(txt), fontdict=fontdict, va='top')
+
+    # Panel (j) — arr + 2nd sin fit added back
+    ax = fig.add_subplot(gs[9, 0])
+    axs.append(ax)
+    ax_cb = fig.add_subplot(gs[9, 1])
+    axcbs[9] = ax_cb
+    mpbl = ax.pcolormesh(arr_times, ranges_km, arr, cmap='plasma', shading='nearest', rasterized=True, antialiased=False)
+    ax.plot(sin_fit.index, poly_fit + sin_fit, label='Final Sin Fit', color='white', lw=3, ls='--')
+    for wl in fitWinLim:
+        ax.axvline(wl, color='lime', ls='--', lw=2)
+    plt.colorbar(mpbl, cax=ax_cb, orientation='vertical', label='Blurred Data')
+    fmt_xaxis(ax, xlim)
+    ax.set_ylabel('Range [km]')
+    ax.set_ylim(250, 2000)
+    ax.legend(loc='upper center', fontsize='x-small', ncols=4)
+
+    # Label all panels
     for ax_inx, ax in enumerate(axs):
-        lbl = '({!s})'.format(letters[ax_inx])
-        ax.set_title(lbl,loc='left')
+        lbl = f'({letters[ax_inx]})'
+        ax.set_title(lbl, loc='left')
 
-    # Add meta data about data sources.
-    meta = result_dct['metaData']
+    # Metadata title on top-most panel
     meta_title = []
-    freq_str = meta.get('freq_str')
-    if freq_str is not None:
-        meta_title.append(freq_str)
-
-    region = meta.get('region')
-    if region is not None:
+    if md.get('freq_str') is not None:
+        meta_title.append(md.get('freq_str'))
+    region = md.get('region')
+    if region:
         if region == 'NA':
             region = 'North America'
         meta_title.append(region)
-    
-    datasets = meta.get('datasets')
-    if datasets is not None:
-        meta_title.append('{!s}'.format(datasets))
+    datasets = md.get('datasets')
+    if datasets:
+        meta_title.append(str(datasets))
+    axs[0].set_title('\n'.join(meta_title), loc='right', fontdict={'size': 'x-small'})
 
-    meta_title = '\n'.join(meta_title)
-    axs[0].set_title(meta_title,loc='right',fontdict={'size':'x-small'})
-
-    # Account for colorbars and line up all axes.
+    # Align all panels with panel (a)
     for ax_inx, ax in enumerate(axs):
         if ax_inx == 0:
             continue
-        adjust_axes(ax,axs[0])
+        adjust_axes(ax, axs[0])
 
     if not os.path.exists(output_dir):
-        os.mkdir(output_dir)
-    date_str    = date.strftime('%Y%m%d')
-    png_fname   = f'{date_str}_curveCombo.png'
-    png_fpath   = os.path.join(output_dir,png_fname)
-    print('   Saving: {!s}'.format(png_fpath))
-    fig.savefig(png_fpath,bbox_inches='tight')
+        os.makedirs(output_dir)
+    date_str = date.strftime('%Y%m%d')
+    png_fname = f'{date_str}_curveCombo.png'
+    png_fpath = os.path.join(output_dir, png_fname)
+    print(f'   Saving: {png_fpath}')
+    fig.tight_layout()
+    fig.savefig(png_fpath, bbox_inches='tight')
     plt.close()
 
-    result_dct['p0_sin_fit'] = p0_sin_fit
     return result_dct
+
+
 
 def sin_fit_key_params_to_csv(all_results,output_dir='output'):
     """

@@ -8,6 +8,8 @@ import xarray as xr
 import math
 import datetime
 from operator import itemgetter
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 
 import string
 
@@ -20,6 +22,101 @@ from scipy.optimize import curve_fit
 ################################################################################
 # Nick's Edge Detection Code ###################################################
 ################################################################################
+
+def visualize_edge_detection_pipeline(
+    arr,
+    date,
+    ranges_km,
+    arr_times,
+    sigma=4.2,
+    qs=[0.4, 0.5, 0.6],
+    occurrence_n=60,
+    i_max=30,
+    zoom_range=None,  # (xmin, xmax) for zoomed x-axis
+    save_path=None
+):
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from scipy.ndimage import gaussian_filter
+
+    # Raw and smoothed heatmaps
+    raw = arr
+    smoothed = gaussian_filter(raw, sigma=(sigma, sigma))
+
+
+    time_vals = np.array(arr_times)
+    extent = [arr_times[0], arr_times[-1], float(ranges_km[0]), float(ranges_km[-1])]
+
+    fig, axs = plt.subplots(2, 2, figsize=(16, 10), sharey='row', sharex=False)
+    # -- Top Left: Full Raw Heatmap --
+    axs[0, 0].imshow(raw.T, aspect='auto', origin='lower', extent=extent, cmap='plasma')
+    axs[0, 0].set_title(f"Raw Heatmap - {date.date()}")
+    axs[0, 0].set_ylabel("Height (km)")
+    axs[0, 0].set_ylim(500, 1500)
+
+    # -- Top Right: Full Smoothed + Edges --
+    axs[0, 1].imshow(smoothed.T, aspect='auto', origin='lower', extent=extent, cmap='plasma')
+    axs[0, 1].legend()
+    axs[0, 1].set_title("Smoothed + Edges")
+    axs[0, 1].set_ylim(500, 1500)
+
+    # -- Bottom Left: Zoomed Raw Heatmap --
+    axs[1, 0].imshow(raw.T, aspect='auto', origin='lower', extent=extent, cmap='plasma')
+    axs[1, 0].set_ylabel("Height (km)")
+    axs[1, 0].set_xlabel("Time (UTC)")
+    axs[1, 0].set_title("Zoomed Raw Heatmap")
+    axs[1, 0].set_ylim(650, 750)
+
+    # -- Bottom Right: Zoomed Smoothed + Edges --
+    axs[1, 1].imshow(smoothed.T, aspect='auto', origin='lower', extent=extent, cmap='plasma')
+    axs[1, 1].set_title("Zoomed Smoothed + Edges")
+    axs[1, 1].set_xlabel("Time (UTC)")
+    axs[1, 1].set_ylim(650, 750)
+
+    axs[1, 0].set_xlim(datetime.datetime(2017, 7, 3, 18, 0),datetime.datetime(2017, 7, 3, 18, 1))
+    axs[1, 1].set_xlim(datetime.datetime(2017, 7, 3, 18, 0),datetime.datetime(2017, 7, 3, 18, 1))
+
+    plt.tight_layout()
+    if save_path:
+        fig.savefig('fig_col', bbox_inches='tight')
+        plt.close(fig)
+    else:
+        plt.show()
+
+        
+def plot_rescale_debug(edge_line_float, height_axis, image=None, title='Rescale Debug', save_path=None):
+    """
+    Plots a float-valued edge line against its integer-rescaled version.
+    Optionally overlays on the original image.
+
+    edge_line_float: 1D float array (same length as time)
+    height_axis: 1D array (e.g., km values, same as image vertical axis)
+    image: optional 2D array to show underneath
+    """
+    edge_line_idx = np.interp(edge_line_float, height_axis, np.arange(len(height_axis)))
+    edge_line_idx_int = np.round(edge_line_idx).astype(int)
+    edge_line_idx_int = np.clip(edge_line_idx_int, 0, len(height_axis)-1)
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    if image is not None:
+        ax.imshow(image.T, aspect='auto', origin='lower', extent=[0, image.shape[0], height_axis[0], height_axis[-1]])
+
+    ax.plot(edge_line_float, label='Original (float)', color='blue')
+    ax.plot(height_axis[edge_line_idx_int], label='Rescaled (int)', color='red', linestyle='--')
+
+    ax.set_ylabel('Height (km)')
+    ax.set_xlabel('Time Index')
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True)
+    ax.set_ylim(500, 1500)
+
+    if save_path:
+        fig.savefig(save_path, dpi=150)
+        plt.close(fig)
+    else:
+        plt.show()
 
 def occurrence_max(arr, n):
     """
@@ -435,6 +532,18 @@ def run_edge_detect(
 
     arr = heatmaps.get_date(date,raise_missing=False)
 
+    plt.figure(figsize=(12, 6))
+    plt.imshow(arr.T, aspect='auto', cmap='plasma')
+    plt.legend()
+    plt.title(f"heatmap {date}")
+    plt.xlabel("Time")
+    plt.ylabel("Range (km)")
+    #plt.xlim(datetime.datetime(2017, 7, 3, 20, 0),datetime.datetime(2017, 7, 3, 22, 0))
+    #plt.ylim(500, 1000)
+    plt.tight_layout()
+    plt.savefig('fig_raw array')
+    plt.close()
+    
     if arr is None:
         warnings.warn(f'Date {date} has no input')
         return
@@ -452,7 +561,9 @@ def run_edge_detect(
 
     arr     = np.nan_to_num(arr, nan=0)
 
+    rarr = arr.copy()
     arr = gaussian_filter(arr.T, sigma=(sigma, sigma))  # [::-1,:]
+    barr = rescale_to_int(arr.T)
     med_lines, min_line, minz_line = measure_thresholds(
         arr,
         qs=qs, 
@@ -463,6 +574,24 @@ def run_edge_detect(
     med_lines   = [scale_km(x,ranges_km) for x in med_lines]
     min_line    = scale_km(min_line,ranges_km)
     minz_line   = scale_km(minz_line,ranges_km)
+
+    extent = [arr_times[0], arr_times[-1], float(ranges_km[0]), float(ranges_km[-1])]
+
+    plt.figure(figsize=(12, 6))
+    plt.imshow(arr, aspect='auto', origin='lower', extent=extent, cmap='plasma')
+    for q, line in zip(qs, med_lines):
+        plt.plot(arr_times, line, label=f'Quantile {q}')
+    plt.plot(arr_times, min_line, label='Min deviation line', linewidth=2)
+    plt.plot(arr_times, minz_line, label='Smoothed min deviation', linewidth=2, linestyle='--')
+    plt.legend()
+    plt.title(f"Edge Detection for {date}")
+    plt.xlabel("Time")
+    plt.ylabel("Range (km)")
+    #plt.xlim(datetime.datetime(2017, 7, 3, 20, 0),datetime.datetime(2017, 7, 3, 22, 0))
+    #plt.ylim(500, 1000)
+    plt.tight_layout()
+    plt.savefig('fig_medlines')
+    plt.close()
 
     med_lines   = pd.DataFrame(
         np.array(med_lines).T,
@@ -501,6 +630,25 @@ def run_edge_detect(
     tf = np.logical_and(sg_edge.index >= winlim[0], sg_edge.index < winlim[1])
     sg_edge[~tf] = 0
 
+    plot_rescale_debug(
+        edge_line_float=edge_1.values,
+        height_axis=ranges_km.values if hasattr(ranges_km, "values") else ranges_km,
+        image=arr,  # Gaussian-filtered image
+        title=f"Edge Rescale Debug — {date.strftime('%Y-%m-%d')}",
+        save_path=f"rescale_debug_{date.strftime('%Y%m%d')}.png"
+    )
+
+    visualize_edge_detection_pipeline(
+        rarr,
+        date=date,
+        ranges_km=ranges_km,
+        arr_times=arr_times,
+        sigma=sigma,
+        qs=qs,
+        occurrence_n=occurence_n,
+        i_max=i_max,
+        save_path=f"edge_detection_{date.date()}.png"
+    )
     # Curve Fit Data ############################################################### 
 
     # Convert Datetime Objects to Relative Seconds and pull out data
@@ -638,6 +786,22 @@ def run_edge_detect(
 
         data_detrend = sin_fit.copy()
 
+    # Package Raw Array into XArray
+    rawDct               = {}
+    rawDct['data']       = rarr
+#    rawDct['coords']     = coords = {}
+#    coords['ranges_km']  = ranges_km.values
+#    coords['datetimes']  = arr_times
+    rawArr               = xr.DataArray(**rawDct)
+    
+    #Package Raw Array into XArray
+    intDct               = {}
+    intDct['data']       = barr
+#    rawDct['coords']     = coords = {}
+#    coords['ranges_km']  = ranges_km.values
+#    coords['datetimes']  = arr_times
+    intArr               = xr.DataArray(**intDct)
+    
     # Package SpotArray into XArray
     daDct               = {}
     daDct['data']       = arr
@@ -648,6 +812,8 @@ def run_edge_detect(
 
     # Set things up for data file.
     result  = {}
+    result['rawArr']            = rawArr
+    result['intArr']            = intArr
     result['spotArr']           = spotArr
     result['med_lines']         = med_lines
     result['000_detectedEdge']  = edge_0

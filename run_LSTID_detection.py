@@ -9,7 +9,7 @@ import multiprocessing
 import hamsci_LSTID_detect as LSTID
 
 # EDIT PARAMETERS HERE #########################################################
-raw_processing_input_dir = 'data'
+raw_processing_input_dir = '../../data'
 datasets                = ['PSK','RBN','WSPR']
 
 clear_cache              = True

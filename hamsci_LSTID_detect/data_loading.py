@@ -100,7 +100,7 @@ class RawSpotProcessor:
         files = []
         for date in self.file_date_range:
             for dataset in self.DATASETS:
-                file_path = os.path.join(self.input_dir, f'{date}_{dataset}.csv.bz2')
+                file_path = os.path.join(self.input_dir, f'{date}_{dataset}.csv')
                 if os.path.isfile(file_path):
                     files.append(file_path)
         if not files:
